@@ -1,0 +1,38 @@
+version: '2'
+services:
+  datacontainer:
+    image: ubuntu:14.04
+    volumes:
+      - ./dataset/:/var/dataset
+      - ./src/:/home/jovyan/work
+      - ./logs/:/tmp/tflogs
+      - ./models/:/tmp/tfmodels
+
+  tf_py3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python __init__.py
+    ports:
+      - "8888:8888"
+      - "6006:6006"
+    volumes_from:
+      - datacontainer
+
+  tensorboard:
+    ports:
+      - "6006:6006"
+    image: gcr.io/tensorflow/tensorflow:0.7.1
+    volumes:
+      - ./logs:/tmp/tflogs
+    command: tensorboard --logdir=/tmp/tflogs
+
+  tensorflow_py3_gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    ports:
+      - "8888:8888"
+    volumes_from:
+      - datacontainer
+
