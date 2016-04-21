@@ -1,6 +1,9 @@
 from data import get_label_images, data_augmentation
 from sklearn import metrics
 from sklearn.cross_validation import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from functools import partial
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import skflow
@@ -33,63 +36,83 @@ def conv_model(X, y):
     return skflow.models.logistic_regression(h_fc1, y)
 
 
-def get_conv_classifier(restore=True, restore_path='/tmp/tfmodels/convmodel'):
-    if restore:
-        try:
-            classifier = skflow.TensorFlowEstimator.restore(restore_path)
+class ConvNet(object):
+    def __init__(self, restore=True, restore_path='/tmp/tfmodels/convmodel'):
+        self.__name__ = __name__
+        self.classifier = None
+        self.restore_path = restore_path
 
-            logger.info('Restored classifier from file')
-            return classifier
-        except ValueError:
-            logger.exception('No model')
-    return create_classifier(restore_path)
+        if restore:
+            try:
+                self.classifier = skflow.TensorFlowEstimator.restore(restore_path)
 
+                logger.info('Restored classifier from file')
+            except ValueError:
+                logger.exception('No model')
+                self.create_classifier()
 
-def create_classifier(save_path):
-    logger.info('Starting to build {0} classifier'.format(__name__))
-    images, labels = get_label_images('/var/dataset/chars74k-lite')
-    n_classes = len(set(labels))
-    logger.info('Classifying {0} labels: {1} '.format(n_classes, set(labels)))
-    logger.info('Found {0} images'.format(len(images)))
+        else:
+            self.create_classifier()
 
-    X_train, X_test, y_train, y_test = cross_validation.train_test_split(
-        images, labels, test_size=0.2, random_state=42)
+    def create_classifier(self):
+        logger.info('Starting to build {0} classifier'.format(__name__))
+        images, labels = get_label_images('/var/dataset/chars74k-lite')
+        n_classes = len(set(labels))
+        logger.info('Classifying {0} labels: {1} '.format(n_classes, set(labels)))
+        logger.info('Found {0} images'.format(len(images)))
 
-    X_train, y_train = data_augmentation(X_train, y_train, config={
-        'noise': [{'mode': 'gaussian'}, {'mode': 'poisson'}, {'mode': 's&p'}],
-        'roll': []  # [(1, 0), (-1, 0), (1, 1), (-1, 1)]
+        X_train, X_test, y_train, y_test = train_test_split(
+            images, labels, test_size=0.2, random_state=42)
 
-    })
+        X_train, y_train = data_augmentation(X_train, y_train, config={
+            'noise': [{'mode': 'gaussian'}, {'mode': 'poisson'}, {'mode': 's&p'}],
+            'roll': [(1, 0), (-1, 0), (1, 1), (-1, 1)]
+        })
 
-    # Shuffle the augmented set
-    X_train, _, y_train, _ = train_test_split(
-        X_train, y_train, test_size=1, random_state=42)
+        # Shuffle the augmented set
+        X_train, _, y_train, _ = train_test_split(
+            X_train, y_train, test_size=1, random_state=42)
 
-    X_train = np.array([np.reshape(image, 20 * 20) for image in X_train])
-    X_test = np.array([np.reshape(image, 20 * 20) for image in X_test])
+        X_train = np.array([np.reshape(image, 20 * 20) for image in X_train])
+        X_test = np.array([np.reshape(image, 20 * 20) for image in X_test])
 
-    logger.info('Training set:\t{0}'.format(len(X_train)))
-    logger.info('Validation set:\t{0}'.format(len(X_test)))
+        logger.info('Training set:\t{0}'.format(len(X_train)))
+        logger.info('Validation set:\t{0}'.format(len(X_test)))
 
-    #val_monitor = skflow.monitors.ValidationMonitor(X_val, y_val,
-    #                                                early_stopping_rounds=200,
-    #                                                n_classes=3,
-    #                                                 print_steps=50)
-    #
-    # provide a validation monitor with early stopping rounds and validation set
-    # classifier.fit(X_train, y_train, val_monitor)
+        #val_monitor = skflow.monitors.ValidationMonitor(X_val, y_val,
+        #                                                early_stopping_rounds=200,
+        #                                                n_classes=3,
+        #                                                 print_steps=50)
+        #
+        # provide a validation monitor with early stopping rounds and validation set
+        # classifier.fit(X_train, y_train, val_monitor)
 
-    # Training and predicting
-    classifier = skflow.TensorFlowEstimator(  #                         20000
-        model_fn=conv_model, n_classes=n_classes, batch_size=100, steps=2000, learning_rate=0.01)
-    classifier.fit(X_train, y_train, logdir='/tmp/tflogs/convnet')
-    score = metrics.accuracy_score(y_test, classifier.predict(X_test))
-    logger.info('Accuracy: {0:f}'.format(score))
-    logger.info('Classification report\n{0}'.format(metrics.classification_report(y_test, classifier.predict(X_test))))
+        scaler = StandardScaler()
 
-    classifier.save(save_path)
+        # Training and predicting
+        classifier = skflow.TensorFlowEstimator(  #                         20000
+            model_fn=conv_model, n_classes=n_classes, batch_size=100, steps=2000, learning_rate=0.01)
 
-    logger.info('Classifier saved')
+        # Add logdir to fit function because sklearn </3 skflow atm.
+        classifier.fit = partial(classifier.fit, logdir='/tmp/tflogs/convnet')
 
-    return classifier
+        pipeline = Pipeline([
+            #("pca", pca),
+            ("sscaler", scaler),  # MinMaxScaler()
+            ("cnn", classifier)])
+
+        pipeline.fit(X_train, y_train) #, logdir='/tmp/tflogs/convnet')
+
+        logger.info('Pipeline:\n{0}'.format(pipeline))
+
+        y_test_pred = pipeline.predict(X_test)
+        score = metrics.accuracy_score(y_test, y_test_pred)
+        logger.info('Accuracy: {0:f}'.format(score))
+        logger.info('Classification report\n{0}'.format(metrics.classification_report(y_test, y_test_pred)))
+
+        classifier.save(self.restore_path)
+
+        logger.info('Classifier saved')
+
+        self.classifier = classifier
 

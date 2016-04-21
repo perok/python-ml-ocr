@@ -19,7 +19,8 @@ def get_label_images(directory):
     # Get label and convert to zero indexing a..z
     # TODO 0..1 or -0.5..0.5
     labels = [ord(char_matcher.search(f).group(1)) - 97 for f in image_files] #np.array, dtype=np.uint32)
-    images = [img_as_float(io.imread(image).astype(np.uint8)) for image in image_files]
+    #images = [img_as_float(io.imread(image).astype(np.uint8)) for image in image_files]
+    images = [io.imread(image) for image in image_files]
 
     return images, labels
 
@@ -39,7 +40,6 @@ def data_augmentation(images, labels, config):
             logger.info('Rolling dataset with: {0} axis={1}'.format(*roll))
             for image, label in dataset:
                 extra_dataset.append((np.roll(image, *roll), label))
-    # TODO, add skewing
 
     dataset.extend(extra_dataset)
     images = np.array([image[0] for image in dataset])
